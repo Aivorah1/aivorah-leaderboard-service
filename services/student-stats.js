@@ -409,7 +409,7 @@ async function recordStudyTime(id, body) {
   return { studyTimeMinutes: totalMins, todayStudyMinutes: todayMins, learningPathMinutes: learningPathMins, assignmentTimeMinutes: assignmentMins, challengeTimeMinutes: challengeMins };
 }
 
-// ── GET /student/:id/weekly?period=week|month ────────────────
+// ── GET /student/:id/weekly?period=week|month ─────────────────────────────
 // "week" (default): the current Mon-Sun, one bar per day, unchanged.
 // "month": the last 28 days grouped into 4 weekly buckets — the frontend's
 // bar chart renders one bar per entry, so 28 individual daily bars would be
@@ -486,7 +486,7 @@ async function getWeeklyActivity(id, period = 'week') {
   };
 }
 
-// ── GET /student/:id/performance?email=... ──────────────────
+// ── GET /student/:id/performance?email=... ────────────────────────────────
 // Was looked up by email against analytics_events, filtering for
 // 'ibpyp_quiz_result'/'ncert_quiz_result' events — but the frontend's real
 // quiz-completion flow (useQuiz.ts) has never logged those event types (confirmed
@@ -538,7 +538,7 @@ async function getStudentPerformance(id) {
   return { topics, avgScore, topicCount: Object.keys(topics).length };
 }
 
-// ── GET /student/:id/attempts ────────────────────────────────
+// ── GET /student/:id/attempts ─────────────────────────────────────────────
 // Every real practice attempt (newest first) with its per-question answers,
 // for the parent's topic drill-down. Optional subject filter (case-insensitive).
 async function getTopicAttempts(id, subject) {
@@ -573,6 +573,9 @@ async function getTopicAttempts(id, subject) {
         correctAnswer: q.correctAnswer ?? '',
         isCorrect: !!q.isCorrect,
         timeSeconds: q.timeSeconds ?? null,
+        // Student's reasoning for their answer (optional). Saved by
+        // trackAttempt when the frontend includes it.
+        reasoning: typeof q.reasoning === 'string' ? q.reasoning : '',
         // The practice test's spoken question: kept so the History report can
         // show what the student said and its AI evaluation.
         ...(q.type ? { type: q.type } : {}),
@@ -582,7 +585,19 @@ async function getTopicAttempts(id, subject) {
   return { attempts };
 }
 
-// ── POST /student/track-attempt ──────────────────────────────
+// ── POST /student/track-attempt ───────────────────────────────────────────
+// Max characters for a student's reasoning text (per question).
+const MAX_REASONING_CHARS = 500;
+
+// Sanitise a single question's reasoning: coerce to string, trim, cap length.
+// Returns the cleaned reasoning (may be empty string). Never throws.
+function sanitizeReasoning(reasoning) {
+  if (reasoning == null) return '';
+  const s = String(reasoning).trim();
+  if (s.length > MAX_REASONING_CHARS) return s.slice(0, MAX_REASONING_CHARS);
+  return s;
+}
+
 async function trackAttempt(body) {
   const {
     studentId, topic, subject, grade, curriculum = '',
@@ -602,18 +617,26 @@ async function trackAttempt(body) {
   // if this value changes, update both files together.
   const passed = score >= 60;
 
+  // Sanitise reasoning on every per-question result: cap length, drop nulls.
+  // Grading (score/correct) is never touched — reasoning is metadata only.
+  const cleanPerQuestion = (perQuestionResults || []).map(q => {
+    if (!q || typeof q !== 'object') return q;
+    const reasoning = sanitizeReasoning(q.reasoning);
+    return { ...q, reasoning };
+  });
+
   const { data, error } = await supabase
     .from('topic_attempts')
     .insert({
       student_id:           studentId,
       topic, subject, grade, curriculum,
       attempt_number:       attemptNumber,
-      total_questions:      totalQuestions || perQuestionResults.length || 0,
-      correct_answers:      correctAnswers ?? perQuestionResults.filter(q => q.isCorrect).length,
+      total_questions:      totalQuestions || cleanPerQuestion.length || 0,
+      correct_answers:      correctAnswers ?? cleanPerQuestion.filter(q => q?.isCorrect).length,
       score:                parseFloat(score),
       passed,
       time_spent_seconds:   timeSpentSeconds,
-      per_question_results: perQuestionResults,
+      per_question_results: cleanPerQuestion,
     })
     .select()
     .single();
@@ -622,4 +645,4 @@ async function trackAttempt(body) {
   return { ok: true, passed, attempt: data };
 }
 
-module.exports = { getStudentStats, updateStudentStats, completeLesson, startTopic, recordStudyTime, getWeeklyActivity, getStudentPerformance, getTopicAttempts, trackAttempt, computeStreakRollover };
+module.exports = { getStudentStats, updateStudentStats, completeLesson, startTopic, recordStudyTime, getWeeklyActivity, getStudentPerformance, getTopicAttempts, trackAttempt, computeStreakRollover, sanitizeReasoning, MAX_REASONING_CHARS };
