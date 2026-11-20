@@ -576,6 +576,12 @@ async function getTopicAttempts(id, subject) {
         // Student's reasoning for their answer (optional). Saved by
         // trackAttempt when the frontend includes it.
         reasoning: typeof q.reasoning === 'string' ? q.reasoning : '',
+        // Practise This Skill evidence (newer attempts only): how many tries
+        // the question took, the first answer, and whether a hint was shown.
+        // Older attempts don't have them and keep working without.
+        ...(Number.isInteger(q.attempts) ? { attempts: q.attempts } : {}),
+        ...(typeof q.firstAnswer === 'string' ? { firstAnswer: q.firstAnswer } : {}),
+        ...(typeof q.hintShown === 'boolean' ? { hintShown: q.hintShown } : {}),
         // The practice test's spoken question: kept so the History report can
         // show what the student said and its AI evaluation.
         ...(q.type ? { type: q.type } : {}),
@@ -596,6 +602,19 @@ function sanitizeReasoning(reasoning) {
   const s = String(reasoning).trim();
   if (s.length > MAX_REASONING_CHARS) return s.slice(0, MAX_REASONING_CHARS);
   return s;
+}
+
+// Per-question evidence for Practise This Skill: the first response, the
+// number of tries and whether a hint was shown, kept apart from the score.
+// Drops anything malformed rather than storing it.
+const MAX_FIRST_ANSWER_CHARS = 300;
+function sanitizeEvidence(q) {
+  const out = {};
+  const tries = Number(q.attempts);
+  out.attempts = Number.isInteger(tries) && tries >= 1 && tries <= 5 ? tries : undefined;
+  out.firstAnswer = q.firstAnswer == null ? undefined : String(q.firstAnswer).trim().slice(0, MAX_FIRST_ANSWER_CHARS);
+  out.hintShown = typeof q.hintShown === 'boolean' ? q.hintShown : undefined;
+  return out;
 }
 
 async function trackAttempt(body) {
@@ -622,7 +641,7 @@ async function trackAttempt(body) {
   const cleanPerQuestion = (perQuestionResults || []).map(q => {
     if (!q || typeof q !== 'object') return q;
     const reasoning = sanitizeReasoning(q.reasoning);
-    return { ...q, reasoning };
+    return { ...q, reasoning, ...sanitizeEvidence(q) };
   });
 
   const { data, error } = await supabase
@@ -645,4 +664,4 @@ async function trackAttempt(body) {
   return { ok: true, passed, attempt: data };
 }
 
-module.exports = { getStudentStats, updateStudentStats, completeLesson, startTopic, recordStudyTime, getWeeklyActivity, getStudentPerformance, getTopicAttempts, trackAttempt, computeStreakRollover, sanitizeReasoning, MAX_REASONING_CHARS };
+module.exports = { sanitizeEvidence, getStudentStats, updateStudentStats, completeLesson, startTopic, recordStudyTime, getWeeklyActivity, getStudentPerformance, getTopicAttempts, trackAttempt, computeStreakRollover, sanitizeReasoning, MAX_REASONING_CHARS };

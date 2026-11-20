@@ -342,7 +342,7 @@ describe('getTopicAttempts', () => {
     expect(supabase._chain.eq).toHaveBeenCalledWith('student_id', 'student-1');
     expect(attempts).toHaveLength(1);
     expect(attempts[0]).toMatchObject({ id: 'a2', topic: 'Fractions', attemptNumber: 2, score: 50, timeSpentSeconds: 40, correctAnswers: 1 });
-    expect(attempts[0].questions[0]).toEqual({ question: '2+2?', studentAnswer: '5', correctAnswer: '4', isCorrect: false, timeSeconds: 7 });
+    expect(attempts[0].questions[0]).toEqual({ question: '2+2?', studentAnswer: '5', correctAnswer: '4', isCorrect: false, timeSeconds: 7, reasoning: '' });
   });
 
   test('the spoken question keeps its type and AI evaluation (History report)', async () => {
@@ -355,7 +355,7 @@ describe('getTopicAttempts', () => {
     });
     const { attempts } = await getTopicAttempts('student-1', 'English');
     expect(attempts[0].createdAt).toBe('2026-11-07T10:30:00Z');
-    expect(attempts[0].questions[2]).toEqual({ question: 'Explain "Kite"', studentAnswer: 'It flies', correctAnswer: '', isCorrect: true, timeSeconds: 40, type: 'spoken', evaluation });
+    expect(attempts[0].questions[2]).toEqual({ question: 'Explain "Kite"', studentAnswer: 'It flies', correctAnswer: '', isCorrect: true, timeSeconds: 40, reasoning: '', type: 'spoken', evaluation });
     // ordinary questions are unchanged (no type / evaluation keys)
     expect(attempts[0].questions[0]).not.toHaveProperty('type');
   });
@@ -382,5 +382,41 @@ describe('trackAttempt', () => {
     supabase._chain.single.mockResolvedValue({ data: { id: 'a1' }, error: null });
     const result = await trackAttempt({ studentId: 's1', topic: 't1', subject: 'Math', grade: 'Grade 4', score: 40 });
     expect(result.passed).toBe(false);
+  });
+});
+
+describe('Practise This Skill evidence per question', () => {
+  test('trackAttempt keeps tries, first answer and hint shown; drops malformed values', async () => {
+    supabase._chain.single.mockResolvedValue({ data: { id: 'a1' }, error: null });
+    await trackAttempt({
+      studentId: 's1', topic: 'A Concrete Example', subject: 'English', grade: 'Grade 8', score: 80,
+      perQuestionResults: [
+        { question: 'Which sentence contains a pun?', isCorrect: true, attempts: 2, firstAnswer: '  Busy bees buzz ', hintShown: true },
+        { question: 'Q2', isCorrect: false, attempts: 99, firstAnswer: 'x'.repeat(400), hintShown: 'yes' },
+      ],
+    });
+    const row = supabase._chain.insert.mock.calls[0][0];
+    const saved = JSON.parse(JSON.stringify(row.per_question_results));
+    expect(saved[0]).toMatchObject({ attempts: 2, firstAnswer: 'Busy bees buzz', hintShown: true });
+    expect(saved[1]).not.toHaveProperty('attempts');
+    expect(saved[1]).not.toHaveProperty('hintShown');
+    expect(saved[1].firstAnswer).toHaveLength(300);
+    // grading is untouched
+    expect(row.score).toBe(80);
+  });
+
+  test('getTopicAttempts returns the evidence for new attempts and nothing extra for old ones', async () => {
+    supabase._chain.then = (resolve) => resolve({
+      data: [{ id: 'a9', topic: 'A Concrete Example', subject: 'English', attempt_number: 1, score: 80, passed: true, total_questions: 1, correct_answers: 1, time_spent_seconds: 30,
+        per_question_results: [
+          { question: 'Which sentence contains a pun?', studentAnswer: 'B', correctAnswer: 'B', isCorrect: true, attempts: 2, firstAnswer: 'A', hintShown: true },
+          { question: 'Old', studentAnswer: 'B', correctAnswer: 'B', isCorrect: true },
+        ],
+        created_at: '2026-11-18T10:00:00Z' }],
+      error: null,
+    });
+    const { attempts } = await getTopicAttempts('s1');
+    expect(attempts[0].questions[0]).toMatchObject({ attempts: 2, firstAnswer: 'A', hintShown: true });
+    expect(attempts[0].questions[1]).not.toHaveProperty('attempts');
   });
 });
